@@ -1,4 +1,10 @@
-import React, { createContext, useState, useContext, ReactNode, useEffect } from 'react';
+import React, {
+  createContext,
+  useState,
+  useContext,
+  ReactNode,
+  useEffect,
+} from "react";
 
 interface Conversation {
   role: string;
@@ -16,16 +22,20 @@ interface KnowledgeBaseContextType {
   setDisplayedAiResult: React.Dispatch<React.SetStateAction<string>>;
 }
 
-const KnowledgeBaseContext = createContext<KnowledgeBaseContextType | undefined>(undefined);
+const KnowledgeBaseContext = createContext<
+  KnowledgeBaseContextType | undefined
+>(undefined);
 
-export const KnowledgeBaseProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+export const KnowledgeBaseProvider: React.FC<{ children: ReactNode }> = ({
+  children,
+}) => {
   const [knowledgeBase, setKnowledgeBase] = useState<string[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [displayedAiResult, setDisplayedAiResult] = useState("");
 
   useEffect(() => {
-    const savedKnowledgeBase = localStorage.getItem('knowledgeBase');
-    const savedConversations = localStorage.getItem('conversations');
+    const savedKnowledgeBase = localStorage.getItem("knowledgeBase");
+    const savedConversations = localStorage.getItem("conversations");
     if (savedKnowledgeBase) {
       setKnowledgeBase(JSON.parse(savedKnowledgeBase));
     }
@@ -35,19 +45,19 @@ export const KnowledgeBaseProvider: React.FC<{ children: ReactNode }> = ({ child
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('knowledgeBase', JSON.stringify(knowledgeBase));
+    localStorage.setItem("knowledgeBase", JSON.stringify(knowledgeBase));
   }, [knowledgeBase]);
 
   useEffect(() => {
-    localStorage.setItem('conversations', JSON.stringify(conversations));
+    localStorage.setItem("conversations", JSON.stringify(conversations));
   }, [conversations]);
 
   const addToKnowledgeBase = (content: string) => {
-    setKnowledgeBase(prev => [...prev, content]);
+    setKnowledgeBase((prev) => [...prev, content]);
   };
 
   const addConversation = (conversation: Conversation) => {
-    setConversations(prev => [...prev, conversation]);
+    setConversations((prev) => [...prev, conversation]);
   };
 
   const clearConversations = () => {
@@ -75,7 +85,9 @@ export const KnowledgeBaseProvider: React.FC<{ children: ReactNode }> = ({ child
 export const useKnowledgeBase = () => {
   const context = useContext(KnowledgeBaseContext);
   if (context === undefined) {
-    throw new Error('useKnowledgeBase must be used within a KnowledgeBaseProvider');
+    throw new Error(
+      "useKnowledgeBase must be used within a KnowledgeBaseProvider"
+    );
   }
   return context;
 };

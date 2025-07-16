@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, ReactNode } from 'react';
+import React, { createContext, useState, useContext, ReactNode } from "react";
 
 interface InterviewContextType {
   currentText: string;
@@ -11,9 +11,13 @@ interface InterviewContextType {
   setLastProcessedIndex: React.Dispatch<React.SetStateAction<number>>;
 }
 
-const InterviewContext = createContext<InterviewContextType | undefined>(undefined);
+const InterviewContext = createContext<InterviewContextType | undefined>(
+  undefined
+);
 
-export const InterviewProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+export const InterviewProvider: React.FC<{ children: ReactNode }> = ({
+  children,
+}) => {
   const [currentText, setCurrentText] = useState("");
   const [aiResult, setAiResult] = useState("");
   const [displayedAiResult, setDisplayedAiResult] = useState("");
@@ -40,7 +44,7 @@ export const InterviewProvider: React.FC<{ children: ReactNode }> = ({ children 
 export const useInterview = () => {
   const context = useContext(InterviewContext);
   if (context === undefined) {
-    throw new Error('useInterview must be used within an InterviewProvider');
+    throw new Error("useInterview must be used within an InterviewProvider");
   }
   return context;
 };

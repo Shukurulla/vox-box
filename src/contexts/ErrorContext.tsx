@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, ReactNode } from 'react';
+import React, { createContext, useState, useContext, ReactNode } from "react";
 
 interface ErrorContextType {
   error: string | null;
@@ -8,7 +8,9 @@ interface ErrorContextType {
 
 const ErrorContext = createContext<ErrorContextType | undefined>(undefined);
 
-export const ErrorProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+export const ErrorProvider: React.FC<{ children: ReactNode }> = ({
+  children,
+}) => {
   const [error, setError] = useState<string | null>(null);
 
   const clearError = () => setError(null);
@@ -23,7 +25,7 @@ export const ErrorProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 export const useError = () => {
   const context = useContext(ErrorContext);
   if (context === undefined) {
-    throw new Error('useError must be used within an ErrorProvider');
+    throw new Error("useError must be used within an ErrorProvider");
   }
   return context;
 };

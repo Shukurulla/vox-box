@@ -1,11 +1,26 @@
 export interface ElectronAPI {
   saveTempAudioFile(audioEncoded: ArrayBuffer): unknown;
-  transcribeAudioFile(tempFilePath: any, arg1: { primaryLanguage: string; secondaryLanguage: string; api_base: any; openai_key: any; }): TranscriptionResult | PromiseLike<TranscriptionResult>;
+  transcribeAudioFile(
+    tempFilePath: any,
+    arg1: {
+      primaryLanguage: string;
+      secondaryLanguage: string;
+      api_base: any;
+      openai_key: any;
+    }
+  ): TranscriptionResult | PromiseLike<TranscriptionResult>;
   getConfig: () => Promise<any>;
   setConfig: (config: any) => Promise<void>;
-  testAPIConfig: (config: any) => Promise<{ success: boolean, error?: string }>;
-  startRecording: () => Promise<Array<{id: string, name: string, thumbnail: string}>>;
-  parsePDF: (pdfBuffer: ArrayBuffer) => Promise<{ text: string, error?: string }>;
+  testAPIConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
+  testAssistant: (
+    config: any
+  ) => Promise<{ success: boolean; error?: string; assistant_name?: string }>;
+  startRecording: () => Promise<
+    Array<{ id: string; name: string; thumbnail: string }>
+  >;
+  parsePDF: (
+    pdfBuffer: ArrayBuffer
+  ) => Promise<{ text: string; error?: string }>;
   processImage: (imagePath: string) => Promise<string>;
   highlightCode: (code: string, language: string) => Promise<string>;
   getSystemAudioStream: () => Promise<string[]>;
@@ -20,7 +35,16 @@ export interface ElectronAPI {
     messages: any[];
     signal?: AbortSignal;
   }) => Promise<{ content: string } | { error: string }>;
-  transcribeAudio: (audioBuffer: ArrayBuffer, config: any) => Promise<TranscriptionResult>;
+  callAssistant: (params: {
+    config: any;
+    assistantId: string;
+    threadId?: string;
+    message: string;
+  }) => Promise<{ content: string; threadId: string } | { error: string }>;
+  transcribeAudio: (
+    audioBuffer: ArrayBuffer,
+    config: any
+  ) => Promise<TranscriptionResult>;
 }
 
 declare global {

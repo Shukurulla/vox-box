@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from "react";
+import { Clock } from "lucide-react";
 
 interface TimerProps {
   isRunning: boolean;
+  className?: string;
 }
 
-const Timer: React.FC<TimerProps> = ({ isRunning }) => {
+const Timer: React.FC<TimerProps> = ({ isRunning, className = "" }) => {
   const [time, setTime] = useState(0);
 
   useEffect(() => {
@@ -27,7 +29,7 @@ const Timer: React.FC<TimerProps> = ({ isRunning }) => {
       .padStart(2, "0")}`;
   };
 
-  return <span className="ml-4">{formatTime(time)}</span>;
+  return <span className={className}>{formatTime(time)}</span>;
 };
 
 export default Timer;
