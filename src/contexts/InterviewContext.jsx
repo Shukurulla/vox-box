@@ -1,23 +1,8 @@
-import React, { createContext, useState, useContext, ReactNode } from "react";
+import React, { createContext, useState, useContext } from "react";
 
-interface InterviewContextType {
-  currentText: string;
-  setCurrentText: React.Dispatch<React.SetStateAction<string>>;
-  aiResult: string;
-  setAiResult: React.Dispatch<React.SetStateAction<string>>;
-  displayedAiResult: string;
-  setDisplayedAiResult: React.Dispatch<React.SetStateAction<string>>;
-  lastProcessedIndex: number;
-  setLastProcessedIndex: React.Dispatch<React.SetStateAction<number>>;
-}
+const InterviewContext = createContext();
 
-const InterviewContext = createContext<InterviewContextType | undefined>(
-  undefined
-);
-
-export const InterviewProvider: React.FC<{ children: ReactNode }> = ({
-  children,
-}) => {
+export const InterviewProvider = ({ children }) => {
   const [currentText, setCurrentText] = useState("");
   const [aiResult, setAiResult] = useState("");
   const [displayedAiResult, setDisplayedAiResult] = useState("");

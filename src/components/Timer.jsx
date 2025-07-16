@@ -1,16 +1,10 @@
 import React, { useState, useEffect } from "react";
-import { Clock } from "lucide-react";
 
-interface TimerProps {
-  isRunning: boolean;
-  className?: string;
-}
-
-const Timer: React.FC<TimerProps> = ({ isRunning, className = "" }) => {
+const Timer = ({ isRunning, className = "" }) => {
   const [time, setTime] = useState(0);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval;
     if (isRunning) {
       interval = setInterval(() => {
         setTime((prevTime) => prevTime + 1);
@@ -21,7 +15,7 @@ const Timer: React.FC<TimerProps> = ({ isRunning, className = "" }) => {
     return () => clearInterval(interval);
   }, [isRunning]);
 
-  const formatTime = (seconds: number) => {
+  const formatTime = (seconds) => {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     return `${minutes.toString().padStart(2, "0")}:${remainingSeconds

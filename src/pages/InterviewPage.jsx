@@ -3,37 +3,23 @@ import {
   Mic,
   MicOff,
   RefreshCw,
-  Play,
   Trash,
-  Save,
   Zap,
   Clock,
   FileText,
-  MessageSquare,
   Send,
   Sparkles,
   Globe,
   FileAudio,
-  CheckCircle,
-  XCircle,
   Bot,
 } from "lucide-react";
 import Timer from "../components/Timer";
-import { useKnowledgeBase } from "../contexts/KnowledgeBaseContext";
 import ErrorDisplay from "../components/ErrorDisplay";
 import { useError } from "../contexts/ErrorContext";
 import { useInterview } from "../contexts/InterviewContext";
 import ReactMarkdown from "react-markdown";
 
-declare global {
-  interface Window {
-    webkitAudioContext: typeof AudioContext;
-  }
-}
-
-const InterviewPage: React.FC = () => {
-  const { knowledgeBase, conversations, addConversation, clearConversations } =
-    useKnowledgeBase();
+const InterviewPage = () => {
   const { error, setError, clearError } = useError();
   const {
     currentText,
@@ -49,22 +35,18 @@ const InterviewPage: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isConfigured, setIsConfigured] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [isAutoGPTEnabled, setIsAutoGPTEnabled] = useState(false);
-  const [userMedia, setUserMedia] = useState<MediaStream | null>(null);
-  const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
-  const [processor, setProcessor] = useState<ScriptProcessorNode | null>(null);
-  const [autoSubmitTimer, setAutoSubmitTimer] = useState<NodeJS.Timeout | null>(
-    null
-  );
-  const [deepgramStatus, setDeepgramStatus] = useState<{
-    language?: string;
-    model?: string;
-  }>({});
-  const [assistantId, setAssistantId] = useState<string>("");
-  const [threadId, setThreadId] = useState<string>("");
+  const [isAutoGPTEnabled, setIsAutoGPTEnabled] = useState(true);
+  const [userMedia, setUserMedia] = useState(null);
+  const [audioContext, setAudioContext] = useState(null);
+  const [processor, setProcessor] = useState(null);
+  const [autoSubmitTimer, setAutoSubmitTimer] = useState(null);
+  const [sttStatus, setSttStatus] = useState({});
+  const [assistantId, setAssistantId] = useState("");
+  const [threadId, setThreadId] = useState("");
+  const [typingTimer, setTypingTimer] = useState(null);
 
-  const aiResponseRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const aiResponseRef = useRef(null);
+  const textareaRef = useRef(null);
 
   // Glass panel styling
   const glassPanelStyle =
@@ -74,16 +56,31 @@ const InterviewPage: React.FC = () => {
     loadConfig();
   }, []);
 
-  const handleAskGPT = async (newContent?: string) => {
-    const contentToProcess =
-      newContent || currentText.slice(lastProcessedIndex).trim();
+  const typeWriter = (text, callback) => {
+    let i = 0;
+    setDisplayedAiResult("");
+    
+    const typeInterval = setInterval(() => {
+      if (i < text.length) {
+        setDisplayedAiResult(text.slice(0, i + 1));
+        i++;
+      } else {
+        clearInterval(typeInterval);
+        if (callback) callback();
+      }
+    }, 20); // Typing speed
+    
+    return typeInterval;
+  };
+
+  const handleAskGPT = async (newContent) => {
+    const contentToProcess = newContent || currentText.slice(lastProcessedIndex).trim();
     if (!contentToProcess) return;
 
     setIsLoading(true);
     try {
       const config = await window.electronAPI.getConfig();
 
-      // Assistant yordamida javob olish
       const response = await window.electronAPI.callAssistant({
         config: config,
         assistantId: assistantId,
@@ -91,24 +88,25 @@ const InterviewPage: React.FC = () => {
         message: contentToProcess,
       });
 
-      if ("error" in response) {
+      if (response.error) {
         throw new Error(response.error);
       }
 
-      // Thread ID ni yangilash (yangi thread yaratilgan bo'lishi mumkin)
       if (response.threadId) {
         setThreadId(response.threadId);
       }
 
       const formattedResponse = response.content.trim();
-      addConversation({ role: "user", content: contentToProcess });
-      addConversation({ role: "assistant", content: formattedResponse });
-      setDisplayedAiResult(
-        (prev) => prev + (prev ? "\n\n" : "") + formattedResponse
-      );
+      
+      // Start typing animation
+      typeWriter(formattedResponse, () => {
+        setAiResult(formattedResponse);
+      });
+      
       setLastProcessedIndex(currentText.length);
     } catch (error) {
-      setError("Failed to get response from GPT Assistant. Please try again.");
+      console.error("Assistant error:", error);
+      setError("Не удалось получить ответ от ассистента. Попробуйте еще раз.");
     } finally {
       setIsLoading(false);
       if (aiResponseRef.current) {
@@ -118,36 +116,35 @@ const InterviewPage: React.FC = () => {
   };
 
   const handleAskGPTStable = useCallback(
-    async (newContent: string) => {
+    async (newContent) => {
       handleAskGPT(newContent);
     },
     [handleAskGPT]
   );
 
   useEffect(() => {
-    let lastTranscriptTime = Date.now();
-    let checkTimer: NodeJS.Timeout | null = null;
-
-    const handleDeepgramTranscript = (_event: any, data: any) => {
+    const handleWhisperTranscript = (event, data) => {
       if (data.transcript && data.is_final) {
-        // Update deepgram status if we have model/language info
+        // Update STT status
         if (data.model || data.language) {
-          setDeepgramStatus({
+          setSttStatus({
             model: data.model,
             language: data.language,
           });
         }
 
-        setCurrentText((prev: string) => {
+        setCurrentText((prev) => {
           const newTranscript = data.transcript.trim();
           if (!prev.endsWith(newTranscript)) {
-            lastTranscriptTime = Date.now();
-            const updatedText = prev + (prev ? "\n" : "") + newTranscript;
+            const updatedText = prev + (prev ? " " : "") + newTranscript;
 
+            // Auto GPT with improved timing
             if (isAutoGPTEnabled) {
               if (autoSubmitTimer) {
                 clearTimeout(autoSubmitTimer);
               }
+              
+              // Process after 2 seconds of silence
               const newTimer = setTimeout(() => {
                 const newContent = updatedText.slice(lastProcessedIndex);
                 if (newContent.trim()) {
@@ -164,66 +161,37 @@ const InterviewPage: React.FC = () => {
       }
     };
 
-    const handleDeepgramStatus = (_event: any, data: any) => {
-      setDeepgramStatus({
+    const handleWhisperStatus = (event, data) => {
+      setSttStatus({
         language: data.language,
         model: data.model,
       });
     };
 
-    const checkAndSubmit = () => {
-      if (isAutoGPTEnabled && Date.now() - lastTranscriptTime >= 2000) {
-        const newContent = currentText.slice(lastProcessedIndex);
-        if (newContent.trim()) {
-          handleAskGPTStable(newContent);
-        }
-      }
-      checkTimer = setTimeout(checkAndSubmit, 1000);
-    };
-
-    window.electronAPI.ipcRenderer.on(
-      "deepgram-transcript",
-      handleDeepgramTranscript
-    );
-    window.electronAPI.ipcRenderer.on("deepgram-status", handleDeepgramStatus);
-    checkTimer = setTimeout(checkAndSubmit, 1000);
+    window.electronAPI.ipcRenderer.on("whisper-transcript", handleWhisperTranscript);
+    window.electronAPI.ipcRenderer.on("whisper-status", handleWhisperStatus);
 
     return () => {
-      window.electronAPI.ipcRenderer.removeListener(
-        "deepgram-transcript",
-        handleDeepgramTranscript
-      );
-      window.electronAPI.ipcRenderer.removeListener(
-        "deepgram-status",
-        handleDeepgramStatus
-      );
-      if (checkTimer) {
-        clearTimeout(checkTimer);
+      window.electronAPI.ipcRenderer.removeListener("whisper-transcript", handleWhisperTranscript);
+      window.electronAPI.ipcRenderer.removeListener("whisper-status", handleWhisperStatus);
+      
+      if (autoSubmitTimer) {
+        clearTimeout(autoSubmitTimer);
       }
     };
-  }, [
-    isAutoGPTEnabled,
-    lastProcessedIndex,
-    currentText,
-    handleAskGPTStable,
-    setCurrentText,
-    setLastProcessedIndex,
-  ]);
+  }, [isAutoGPTEnabled, lastProcessedIndex, currentText, handleAskGPTStable, setCurrentText]);
 
   const loadConfig = async () => {
     try {
       const config = await window.electronAPI.getConfig();
-      if (config && config.openai_key && config.deepgram_api_key) {
+      if (config && config.openai_key) {
         setIsConfigured(true);
-        // Assistant ID ni konfiguratsiyadan olish
         setAssistantId(config.assistant_id || "asst_ZyT7rWrTyqNq5l74PdATurJ5");
       } else {
-        setError(
-          "OpenAI API key or Deepgram API key not configured. Please check settings."
-        );
+        setError("OpenAI API ключ не настроен. Проверьте файл .env");
       }
     } catch (err) {
-      setError("Failed to load configuration. Please check settings.");
+      setError("Не удалось загрузить конфигурацию. Проверьте файл .env");
     }
   };
 
@@ -241,43 +209,22 @@ const InterviewPage: React.FC = () => {
 
       const config = await window.electronAPI.getConfig();
 
-      // Model tanlash - rus tili uchun maxsus
-      const deepgramModel = config.deepgram_model || "nova-2";
-      let startFunction = "start-deepgram"; // default
+      console.log("🎙️ Запуск OpenAI Whisper STT");
 
-      if (config.primaryLanguage === "ru") {
-        if (deepgramModel === "whisper") {
-          startFunction = "start-deepgram-whisper";
-          console.log("🇷🇺 Using Whisper model for Russian");
-        } else {
-          startFunction = "start-deepgram";
-          console.log("🇷🇺 Using Nova model for Russian");
-        }
-      }
-
-      console.log(`Starting ${startFunction} with config:`, {
-        language: config.primaryLanguage,
-        model: deepgramModel,
+      const result = await window.electronAPI.startWhisperSTT({
+        openai_key: config.openai_key,
+        api_base: config.api_base,
+        primaryLanguage: config.primaryLanguage,
       });
-
-      const result = await window.electronAPI.ipcRenderer.invoke(
-        startFunction,
-        {
-          deepgram_key: config.deepgram_api_key,
-          primaryLanguage: config.primaryLanguage,
-          deepgram_model: deepgramModel,
-        }
-      );
 
       if (!result.success) {
         throw new Error(result.error);
       }
 
-      console.log("✅ Deepgram started:", result.message);
+      console.log("✅ Whisper STT запущен:", result.message);
 
-      // Update deepgram status with info from the result
       if (result.language || result.model) {
-        setDeepgramStatus({
+        setSttStatus({
           language: result.language,
           model: result.model,
         });
@@ -294,26 +241,21 @@ const InterviewPage: React.FC = () => {
       source.connect(processor);
       processor.connect(context.destination);
 
-      processor.onaudioprocess = (e: {
-        inputBuffer: { getChannelData: (arg0: number) => any };
-      }) => {
+      processor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
         const audioData = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
           audioData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7fff;
         }
-        window.electronAPI.ipcRenderer.invoke(
-          "send-audio-to-deepgram",
-          audioData.buffer
-        );
+        window.electronAPI.sendAudioToWhisper(audioData.buffer);
       };
 
       setIsRecording(true);
-    } catch (err: any) {
-      console.error("Recording error:", err);
+    } catch (err) {
+      console.error("Ошибка записи:", err);
       setError(
-        "Failed to start recording. " +
-          (err.message || "Please check permissions or try again.")
+        "Не удалось начать запись. " +
+          (err.message || "Проверьте разрешения или попробуйте снова.")
       );
     }
   };
@@ -328,12 +270,12 @@ const InterviewPage: React.FC = () => {
     if (processor) {
       processor.disconnect();
     }
-    window.electronAPI.ipcRenderer.invoke("stop-deepgram");
+    window.electronAPI.stopWhisperSTT();
     setIsRecording(false);
     setUserMedia(null);
     setAudioContext(null);
     setProcessor(null);
-    setDeepgramStatus({});
+    setSttStatus({});
   };
 
   useEffect(() => {
@@ -351,15 +293,15 @@ const InterviewPage: React.FC = () => {
     }
   }, [displayedAiResult]);
 
-  const debounce = (func: Function, delay: number) => {
-    let timeoutId: NodeJS.Timeout;
-    return (...args: any[]) => {
+  const debounce = (func, delay) => {
+    let timeoutId;
+    return (...args) => {
       clearTimeout(timeoutId);
       timeoutId = setTimeout(() => func(...args), delay);
     };
   };
 
-  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleTextareaChange = (e) => {
     setCurrentText(e.target.value);
   };
 
@@ -367,10 +309,8 @@ const InterviewPage: React.FC = () => {
     <div className="min-h-[calc(100vh-64px)] bg-gradient-to-br from-indigo-50 to-blue-100 dark:from-gray-900 dark:to-indigo-950 p-4 transition-all duration-300">
       <ErrorDisplay error={error} onClose={clearError} />
 
-      {/* Control Panel */}
-      <div
-        className={`${glassPanelStyle} p-4 mb-4 flex flex-wrap items-center justify-between gap-3`}
-      >
+      {/* Панель управления */}
+      <div className={`${glassPanelStyle} p-4 mb-4 flex flex-wrap items-center justify-between gap-3`}>
         <div className="flex items-center space-x-3">
           <button
             onClick={isRecording ? stopRecording : startRecording}
@@ -387,10 +327,10 @@ const InterviewPage: React.FC = () => {
               {isRecording ? <MicOff size={20} /> : <Mic size={20} />}
             </span>
             <span className="absolute flex items-center justify-center w-full h-full text-white transition-all duration-300 transform group-hover:translate-x-full ease">
-              {isRecording ? "Stop" : "Record"}
+              {isRecording ? "Остановить" : "Записать"}
             </span>
             <span className="relative invisible">
-              {isRecording ? "Stop Recording" : "Start Recording"}
+              {isRecording ? "Остановить запись" : "Начать запись"}
             </span>
           </button>
 
@@ -404,21 +344,21 @@ const InterviewPage: React.FC = () => {
         </div>
 
         <div className="flex items-center space-x-3">
-          {/* Assistant ID display */}
+          {/* Отображение Assistant ID */}
           {assistantId && (
             <div className="flex items-center px-3 py-1.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300">
               <Bot size={14} className="mr-1" />
-              <span className="text-xs font-medium">Assistant Active</span>
+              <span className="text-xs font-medium">Ассистент активен</span>
             </div>
           )}
 
-          {/* Automatic GPT toggle */}
+          {/* Автоматический GPT переключатель */}
           <label className="flex items-center cursor-pointer space-x-2 px-4 py-2 rounded-full transition-all duration-300 bg-white/30 dark:bg-gray-800/30 hover:bg-white/50 dark:hover:bg-gray-700/50">
             <input
               type="checkbox"
               checked={isAutoGPTEnabled}
               onChange={(e) => setIsAutoGPTEnabled(e.target.checked)}
-              className="sr-only" // Hide the actual checkbox
+              className="sr-only"
             />
             <div
               className={`relative w-10 h-5 transition-all duration-200 ease-in-out rounded-full ${
@@ -442,59 +382,51 @@ const InterviewPage: React.FC = () => {
                     : "text-gray-500 dark:text-gray-400"
                 }`}
               />
-              <span className="text-sm font-medium">Auto</span>
+              <span className="text-sm font-medium">Авто</span>
             </div>
           </label>
 
-          {/* Status indicators */}
-          {isRecording && deepgramStatus.language && (
+          {/* Индикаторы статуса */}
+          {isRecording && sttStatus.language && (
             <div className="flex items-center px-3 py-1.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300">
               <Globe size={14} className="mr-1" />
               <span className="text-xs font-medium">
-                {deepgramStatus.language === "ru"
-                  ? "Russian"
-                  : deepgramStatus.language === "en"
-                  ? "English"
-                  : deepgramStatus.language}
+                {sttStatus.language === "ru"
+                  ? "Русский"
+                  : sttStatus.language === "en"
+                  ? "Английский"
+                  : sttStatus.language}
               </span>
             </div>
           )}
 
-          {isRecording && deepgramStatus.model && (
+          {isRecording && sttStatus.model && (
             <div className="flex items-center px-3 py-1.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300">
               <FileAudio size={14} className="mr-1" />
               <span className="text-xs font-medium">
-                {deepgramStatus.model.includes("whisper")
-                  ? "Whisper"
-                  : deepgramStatus.model.includes("nova-2")
-                  ? "Nova-2"
-                  : deepgramStatus.model.includes("nova-3")
-                  ? "Nova-3"
-                  : deepgramStatus.model}
+                {sttStatus.model.includes("whisper") ? "Whisper" : sttStatus.model}
               </span>
             </div>
           )}
         </div>
       </div>
 
-      {/* Main Content Area */}
+      {/* Основная область контента */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Transcription Panel */}
-        <div
-          className={`${glassPanelStyle} p-4 flex flex-col h-[calc(100vh-170px)]`}
-        >
+        {/* Панель транскрипции */}
+        <div className={`${glassPanelStyle} p-4 flex flex-col h-[calc(100vh-170px)]`}>
           <div className="flex justify-between items-center mb-3">
             <h2 className="text-lg font-semibold flex items-center">
               <FileText
                 size={18}
                 className="mr-2 text-indigo-600 dark:text-indigo-400"
               />
-              Transcribed Text
+              Транскрибированный текст
             </h2>
             <button
               onClick={() => setCurrentText("")}
               className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
-              title="Clear text"
+              title="Очистить текст"
             >
               <Trash size={16} className="text-gray-500 dark:text-gray-400" />
             </button>
@@ -507,8 +439,8 @@ const InterviewPage: React.FC = () => {
             className="flex-grow p-3 bg-white/50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none transition-all"
             placeholder={
               isRecording
-                ? "Recording... Speech will appear here"
-                : "Transcribed text will appear here..."
+                ? "Идет запись... Речь появится здесь"
+                : "Транскрибированный текст появится здесь..."
             }
           />
 
@@ -517,29 +449,27 @@ const InterviewPage: React.FC = () => {
               <div className="flex items-center space-x-1">
                 <span className="animate-ping inline-flex h-2 w-2 rounded-full bg-red-600 opacity-75"></span>
                 <span className="text-xs text-gray-500 dark:text-gray-400">
-                  Recording in progress
+                  Идет запись
                 </span>
               </div>
             </div>
           )}
         </div>
 
-        {/* AI Response Panel */}
-        <div
-          className={`${glassPanelStyle} p-4 flex flex-col h-[calc(100vh-170px)]`}
-        >
+        {/* Панель ответа ИИ */}
+        <div className={`${glassPanelStyle} p-4 flex flex-col h-[calc(100vh-170px)]`}>
           <div className="flex justify-between items-center mb-3">
             <h2 className="text-lg font-semibold flex items-center">
               <Sparkles
                 size={18}
                 className="mr-2 text-indigo-600 dark:text-indigo-400"
               />
-              Assistant Response
+              Ответ ассистента
             </h2>
             <button
               onClick={() => setDisplayedAiResult("")}
               className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
-              title="Clear AI response"
+              title="Очистить ответ ИИ"
             >
               <Trash size={16} className="text-gray-500 dark:text-gray-400" />
             </button>
@@ -562,7 +492,7 @@ const InterviewPage: React.FC = () => {
               </ReactMarkdown>
             ) : (
               <div className="text-gray-400 dark:text-gray-500 italic">
-                Assistant response will appear here...
+                Ответ ассистента появится здесь...
               </div>
             )}
           </div>
@@ -579,12 +509,12 @@ const InterviewPage: React.FC = () => {
             {isLoading ? (
               <>
                 <RefreshCw size={18} className="mr-2 animate-spin" />
-                <span>Processing...</span>
+                <span>Обработка...</span>
               </>
             ) : (
               <>
                 <Send size={18} className="mr-2" />
-                <span>Ask Assistant</span>
+                <span>Спросить ассистента</span>
               </>
             )}
           </button>
