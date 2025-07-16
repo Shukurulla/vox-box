@@ -534,7 +534,7 @@ const InterviewPage: React.FC = () => {
                 size={18}
                 className="mr-2 text-indigo-600 dark:text-indigo-400"
               />
-              AI Assistant Response
+              Assistant Response
             </h2>
             <button
               onClick={() => setDisplayedAiResult("")}
@@ -562,7 +562,7 @@ const InterviewPage: React.FC = () => {
               </ReactMarkdown>
             ) : (
               <div className="text-gray-400 dark:text-gray-500 italic">
-                AI Assistant response will appear here...
+                Assistant response will appear here...
               </div>
             )}
           </div>
