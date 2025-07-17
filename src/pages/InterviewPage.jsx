@@ -43,12 +43,10 @@ const InterviewPage = () => {
   const [sttStatus, setSttStatus] = useState({});
   const [assistantId, setAssistantId] = useState("");
   const [threadId, setThreadId] = useState("");
-  const [typingTimer, setTypingTimer] = useState(null);
 
   const aiResponseRef = useRef(null);
   const textareaRef = useRef(null);
 
-  // Glass panel styling
   const glassPanelStyle =
     "bg-white bg-opacity-20 backdrop-blur-lg border border-gray-200 dark:border-gray-700 shadow-xl rounded-xl";
 
@@ -59,7 +57,7 @@ const InterviewPage = () => {
   const typeWriter = (text, callback) => {
     let i = 0;
     setDisplayedAiResult("");
-    
+
     const typeInterval = setInterval(() => {
       if (i < text.length) {
         setDisplayedAiResult(text.slice(0, i + 1));
@@ -68,13 +66,14 @@ const InterviewPage = () => {
         clearInterval(typeInterval);
         if (callback) callback();
       }
-    }, 20); // Typing speed
-    
+    }, 20);
+
     return typeInterval;
   };
 
   const handleAskGPT = async (newContent) => {
-    const contentToProcess = newContent || currentText.slice(lastProcessedIndex).trim();
+    const contentToProcess =
+      newContent || currentText.slice(lastProcessedIndex).trim();
     if (!contentToProcess) return;
 
     setIsLoading(true);
@@ -97,12 +96,11 @@ const InterviewPage = () => {
       }
 
       const formattedResponse = response.content.trim();
-      
-      // Start typing animation
+
       typeWriter(formattedResponse, () => {
         setAiResult(formattedResponse);
       });
-      
+
       setLastProcessedIndex(currentText.length);
     } catch (error) {
       console.error("Assistant error:", error);
@@ -123,72 +121,104 @@ const InterviewPage = () => {
   );
 
   useEffect(() => {
-    const handleWhisperTranscript = (event, data) => {
-      if (data.transcript && data.is_final) {
-        // Update STT status
-        if (data.model || data.language) {
+    const handleDeepgramTranscript = (event, data) => {
+      console.log("Raw Deepgram data:", JSON.stringify(data, null, 2));
+      if (data.is_final && data.channel?.alternatives?.[0]?.transcript) {
+        const transcript = data.channel.alternatives[0].transcript.trim();
+        console.log("Processed transcript:", transcript);
+
+        if (transcript) {
           setSttStatus({
-            model: data.model,
-            language: data.language,
+            model: data.metadata?.model_info?.name || "general",
+            language: data.metadata?.model_info?.language || "ru",
           });
-        }
 
-        setCurrentText((prev) => {
-          const newTranscript = data.transcript.trim();
-          if (!prev.endsWith(newTranscript)) {
-            const updatedText = prev + (prev ? " " : "") + newTranscript;
+          setCurrentText((prev) => {
+            const updatedText = prev + (prev ? " " : "") + transcript;
+            console.log("Updated currentText:", updatedText);
 
-            // Auto GPT with improved timing
             if (isAutoGPTEnabled) {
               if (autoSubmitTimer) {
                 clearTimeout(autoSubmitTimer);
               }
-              
-              // Process after 2 seconds of silence
+
               const newTimer = setTimeout(() => {
                 const newContent = updatedText.slice(lastProcessedIndex);
                 if (newContent.trim()) {
+                  console.log("Sending to GPT:", newContent);
                   handleAskGPTStable(newContent);
                 }
-              }, 2000);
+              }, 500);
               setAutoSubmitTimer(newTimer);
             }
 
             return updatedText;
-          }
-          return prev;
-        });
+          });
+        } else {
+          console.log("Transcript is empty");
+        }
+      } else {
+        console.log("No valid transcript found in data");
       }
     };
 
-    const handleWhisperStatus = (event, data) => {
+    const handleDeepgramStatus = (event, data) => {
+      console.log("Deepgram status:", data);
       setSttStatus({
         language: data.language,
         model: data.model,
+        status: data.status,
       });
     };
 
-    window.electronAPI.ipcRenderer.on("whisper-transcript", handleWhisperTranscript);
-    window.electronAPI.ipcRenderer.on("whisper-status", handleWhisperStatus);
+    const handleDeepgramError = (event, error) => {
+      console.error("Deepgram error:", error);
+      setError("Ошибка распознавания речи: " + error.message);
+    };
+
+    window.electronAPI.ipcRenderer.on(
+      "deepgram-transcript",
+      handleDeepgramTranscript
+    );
+    window.electronAPI.ipcRenderer.on("deepgram-status", handleDeepgramStatus);
+    window.electronAPI.ipcRenderer.on("deepgram-error", handleDeepgramError);
 
     return () => {
-      window.electronAPI.ipcRenderer.removeListener("whisper-transcript", handleWhisperTranscript);
-      window.electronAPI.ipcRenderer.removeListener("whisper-status", handleWhisperStatus);
-      
+      window.electronAPI.ipcRenderer.removeListener(
+        "deepgram-transcript",
+        handleDeepgramTranscript
+      );
+      window.electronAPI.ipcRenderer.removeListener(
+        "deepgram-status",
+        handleDeepgramStatus
+      );
+      window.electronAPI.ipcRenderer.removeListener(
+        "deepgram-error",
+        handleDeepgramError
+      );
+
       if (autoSubmitTimer) {
         clearTimeout(autoSubmitTimer);
       }
     };
-  }, [isAutoGPTEnabled, lastProcessedIndex, currentText, handleAskGPTStable, setCurrentText]);
+  }, [
+    isAutoGPTEnabled,
+    lastProcessedIndex,
+    currentText,
+    handleAskGPTStable,
+    setCurrentText,
+  ]);
 
   const loadConfig = async () => {
     try {
       const config = await window.electronAPI.getConfig();
-      if (config && config.openai_key) {
+      if (config && config.openai_key && config.deepgram_api_key) {
         setIsConfigured(true);
         setAssistantId(config.assistant_id || "asst_ZyT7rWrTyqNq5l74PdATurJ5");
       } else {
-        setError("OpenAI API ключ не настроен. Проверьте файл .env");
+        setError(
+          "OpenAI API ключ или Deepgram API ключ не настроен. Проверьте файл .env"
+        );
       }
     } catch (err) {
       setError("Не удалось загрузить конфигурацию. Проверьте файл .env");
@@ -197,23 +227,22 @@ const InterviewPage = () => {
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: false,
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           sampleRate: 16000,
         },
+        video: false,
       });
       setUserMedia(stream);
 
       const config = await window.electronAPI.getConfig();
 
-      console.log("🎙️ Запуск OpenAI Whisper STT");
+      console.log("🎙️ Запуск Deepgram STT");
 
-      const result = await window.electronAPI.startWhisperSTT({
-        openai_key: config.openai_key,
-        api_base: config.api_base,
+      const result = await window.electronAPI.startDeepgramSTT({
+        deepgram_api_key: config.deepgram_api_key,
         primaryLanguage: config.primaryLanguage,
       });
 
@@ -221,7 +250,7 @@ const InterviewPage = () => {
         throw new Error(result.error);
       }
 
-      console.log("✅ Whisper STT запущен:", result.message);
+      console.log("✅ Deepgram STT запущен:", result.message);
 
       if (result.language || result.model) {
         setSttStatus({
@@ -247,15 +276,16 @@ const InterviewPage = () => {
         for (let i = 0; i < inputData.length; i++) {
           audioData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7fff;
         }
-        window.electronAPI.sendAudioToWhisper(audioData.buffer);
+        window.electronAPI.sendAudioToDeepgram(audioData.buffer);
       };
 
       setIsRecording(true);
     } catch (err) {
       console.error("Ошибка записи:", err);
       setError(
-        "Не удалось начать запись. " +
-          (err.message || "Проверьте разрешения или попробуйте снова.")
+        "Не удалось начать запись: " +
+          (err.message ||
+            "Проверьте разрешения микрофона или попробуйте снова.")
       );
     }
   };
@@ -270,7 +300,7 @@ const InterviewPage = () => {
     if (processor) {
       processor.disconnect();
     }
-    window.electronAPI.stopWhisperSTT();
+    window.electronAPI.stopDeepgramSTT();
     setIsRecording(false);
     setUserMedia(null);
     setAudioContext(null);
@@ -309,8 +339,9 @@ const InterviewPage = () => {
     <div className="min-h-[calc(100vh-64px)] bg-gradient-to-br from-indigo-50 to-blue-100 dark:from-gray-900 dark:to-indigo-950 p-4 transition-all duration-300">
       <ErrorDisplay error={error} onClose={clearError} />
 
-      {/* Панель управления */}
-      <div className={`${glassPanelStyle} p-4 mb-4 flex flex-wrap items-center justify-between gap-3`}>
+      <div
+        className={`${glassPanelStyle} p-4 mb-4 flex flex-wrap items-center justify-between gap-3`}
+      >
         <div className="flex items-center space-x-3">
           <button
             onClick={isRecording ? stopRecording : startRecording}
@@ -344,7 +375,6 @@ const InterviewPage = () => {
         </div>
 
         <div className="flex items-center space-x-3">
-          {/* Отображение Assistant ID */}
           {assistantId && (
             <div className="flex items-center px-3 py-1.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300">
               <Bot size={14} className="mr-1" />
@@ -352,7 +382,6 @@ const InterviewPage = () => {
             </div>
           )}
 
-          {/* Автоматический GPT переключатель */}
           <label className="flex items-center cursor-pointer space-x-2 px-4 py-2 rounded-full transition-all duration-300 bg-white/30 dark:bg-gray-800/30 hover:bg-white/50 dark:hover:bg-gray-700/50">
             <input
               type="checkbox"
@@ -386,7 +415,6 @@ const InterviewPage = () => {
             </div>
           </label>
 
-          {/* Индикаторы статуса */}
           {isRecording && sttStatus.language && (
             <div className="flex items-center px-3 py-1.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300">
               <Globe size={14} className="mr-1" />
@@ -404,17 +432,19 @@ const InterviewPage = () => {
             <div className="flex items-center px-3 py-1.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300">
               <FileAudio size={14} className="mr-1" />
               <span className="text-xs font-medium">
-                {sttStatus.model.includes("whisper") ? "Whisper" : sttStatus.model}
+                {sttStatus.model.includes("deepgram")
+                  ? "Deepgram"
+                  : sttStatus.model}
               </span>
             </div>
           )}
         </div>
       </div>
 
-      {/* Основная область контента */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Панель транскрипции */}
-        <div className={`${glassPanelStyle} p-4 flex flex-col h-[calc(100vh-170px)]`}>
+        <div
+          className={`${glassPanelStyle} p-4 flex flex-col h-[calc(100vh-170px)]`}
+        >
           <div className="flex justify-between items-center mb-3">
             <h2 className="text-lg font-semibold flex items-center">
               <FileText
@@ -456,8 +486,9 @@ const InterviewPage = () => {
           )}
         </div>
 
-        {/* Панель ответа ИИ */}
-        <div className={`${glassPanelStyle} p-4 flex flex-col h-[calc(100vh-170px)]`}>
+        <div
+          className={`${glassPanelStyle} p-4 flex flex-col h-[calc(100vh-170px)]`}
+        >
           <div className="flex justify-between items-center mb-3">
             <h2 className="text-lg font-semibold flex items-center">
               <Sparkles

@@ -10,13 +10,9 @@ const fs = require("fs");
 const axios = require("axios");
 const FormData = require("form-data");
 const { Buffer } = require("buffer");
+const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 require("dotenv").config();
 
-// Webpack constants
-// declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
-// declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
-
-// Handle creating/removing shortcuts on Windows when installing/uninstalling.
 const electronSquirrelStartup = require("electron-squirrel-startup");
 
 if (electronSquirrelStartup) {
@@ -41,7 +37,7 @@ const createWindow = () => {
         responseHeaders: {
           ...details.responseHeaders,
           "Content-Security-Policy": [
-            "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; connect-src 'self' https://api.openai.com;",
+            "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; connect-src 'self' https://api.openai.com https://api.deepgram.com ws://api.deepgram.com wss://api.deepgram.com;",
           ],
         },
       });
@@ -50,7 +46,7 @@ const createWindow = () => {
 
   mainWindow.webContents.session.setPermissionRequestHandler(
     (webContents, permission, callback) => {
-      if (permission === "media") {
+      if (permission === "media" || permission === "microphone") {
         callback(true);
       } else {
         callback(false);
@@ -58,7 +54,6 @@ const createWindow = () => {
     }
   );
 
-  // Webpack entry point'ni to'g'ri yuklash
   mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY + "#/main_window");
 };
 
@@ -76,7 +71,6 @@ app.on("activate", () => {
   }
 });
 
-// Configuration handlers
 ipcMain.handle("get-config", () => {
   return {
     openai_key: process.env.OPENAI_API_KEY,
@@ -85,10 +79,10 @@ ipcMain.handle("get-config", () => {
     assistant_id: process.env.ASSISTANT_ID || "asst_ZyT7rWrTyqNq5l74PdATurJ5",
     primaryLanguage: process.env.PRIMARY_LANGUAGE || "ru",
     secondaryLanguage: process.env.SECONDARY_LANGUAGE || "en",
+    deepgram_api_key: process.env.DEEPGRAM_API_KEY,
   };
 });
 
-// PDF processing
 ipcMain.handle("parsePDF", async (event, pdfBuffer) => {
   try {
     const pdf = require("pdf-parse");
@@ -101,139 +95,123 @@ ipcMain.handle("parsePDF", async (event, pdfBuffer) => {
   }
 });
 
-// OpenAI STT implementation
-let isRecording = false;
-let audioChunks = [];
-let recordingTimer = null;
-let processAudioTimer = null;
+let deepgramConnection = null;
 
-ipcMain.handle("start-whisper-stt", async (event, config) => {
+ipcMain.handle("start-deepgram-stt", async (event, config) => {
   try {
-    console.log("Starting OpenAI Whisper STT");
-    isRecording = true;
-    audioChunks = [];
+    console.log("Starting Deepgram STT");
+
+    if (!config.deepgram_api_key) {
+      throw new Error("Deepgram API key is required");
+    }
+
+    const deepgram = createClient(config.deepgram_api_key);
+    deepgramConnection = deepgram.listen.live({
+      punctuate: true,
+      interim_results: false,
+      model: "general",
+      language: config.primaryLanguage || "ru",
+      encoding: "linear16",
+      sample_rate: 16000,
+      endpointing: 500, // 0.5 seconds
+      smart_format: true,
+    });
+
+    deepgramConnection.addListener(LiveTranscriptionEvents.Open, () => {
+      console.log("Deepgram connection opened");
+      event.sender.send("deepgram-status", {
+        status: "open",
+        language: config.primaryLanguage,
+        model: "deepgram-general",
+      });
+    });
+
+    deepgramConnection.addListener(LiveTranscriptionEvents.Close, () => {
+      console.log("Deepgram connection closed");
+      event.sender.send("deepgram-status", { status: "closed" });
+    });
+
+    deepgramConnection.addListener(
+      LiveTranscriptionEvents.Transcript,
+      (data) => {
+        console.log("Deepgram transcript received:", data);
+        if (
+          data &&
+          data.is_final &&
+          data.channel?.alternatives?.[0]?.transcript &&
+          data.speech_final
+        ) {
+          const transcript = data.channel.alternatives[0].transcript.trim();
+          if (transcript) {
+            console.log("Sending transcript to renderer:", transcript);
+            event.sender.send("deepgram-transcript", {
+              transcript: transcript,
+              is_final: true,
+              speech_final: data.speech_final,
+              language: config.primaryLanguage,
+              model: "deepgram-general",
+              metadata: data.metadata,
+            });
+          }
+        }
+      }
+    );
+
+    deepgramConnection.addListener(LiveTranscriptionEvents.Error, (err) => {
+      console.error("Deepgram error:", err);
+      event.sender.send("deepgram-error", err);
+    });
+
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Deepgram connection timeout"));
+      }, 10000);
+
+      deepgramConnection.addListener(LiveTranscriptionEvents.Open, () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+
+      deepgramConnection.addListener(LiveTranscriptionEvents.Error, (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
 
     return {
       success: true,
-      message: "OpenAI Whisper STT started successfully",
-      model: "whisper-1",
+      message: "Deepgram STT started successfully",
+      model: "deepgram-general",
       language: config.primaryLanguage,
     };
   } catch (error) {
-    console.error("Whisper STT start error:", error);
+    console.error("Deepgram STT start error:", error);
     return { success: false, error: error.message };
   }
 });
 
-ipcMain.handle("send-audio-to-whisper", async (event, audioData) => {
-  if (!isRecording) return;
+ipcMain.handle("send-audio-to-deepgram", async (event, audioData) => {
+  if (!deepgramConnection) {
+    console.warn("Deepgram connection not established");
+    return;
+  }
 
   try {
-    // Convert audio data to buffer and add to chunks
     const buffer = Buffer.from(audioData);
-    audioChunks.push(buffer);
-
-    // Clear previous timer
-    if (processAudioTimer) {
-      clearTimeout(processAudioTimer);
-    }
-
-    // Process audio after 1 second of silence
-    processAudioTimer = setTimeout(async () => {
-      if (audioChunks.length > 0) {
-        await processAudioChunks(event);
-      }
-    }, 1000);
+    deepgramConnection.send(buffer);
   } catch (error) {
-    console.error("Failed to process audio data:", error);
+    console.error("Failed to send audio data to Deepgram:", error);
   }
 });
 
-async function processAudioChunks(event) {
-  if (audioChunks.length === 0) return;
-
-  try {
-    // Combine all audio chunks
-    const combinedBuffer = Buffer.concat(audioChunks);
-    audioChunks = []; // Clear chunks
-
-    // Save to temporary file
-    const tempFilePath = path.join(
-      app.getPath("temp"),
-      `temp_audio_${Date.now()}.wav`
-    );
-
-    fs.writeFileSync(tempFilePath, combinedBuffer);
-
-    // Transcribe using OpenAI Whisper
-    const config = await getConfig();
-    const formData = new FormData();
-    formData.append("file", fs.createReadStream(tempFilePath), "audio.wav");
-    formData.append("model", "whisper-1");
-
-    if (config.primaryLanguage && config.primaryLanguage !== "auto") {
-      formData.append("language", config.primaryLanguage);
-    }
-
-    const baseUrl = normalizeApiBaseUrl(config.api_base);
-    const apiUrl = `${baseUrl}/audio/transcriptions`;
-
-    const response = await axios.post(apiUrl, formData, {
-      headers: {
-        ...formData.getHeaders(),
-        Authorization: `Bearer ${config.openai_key}`,
-      },
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity,
-    });
-
-    // Clean up temp file
-    fs.unlinkSync(tempFilePath);
-
-    if (response.data.text && response.data.text.trim()) {
-      // Send transcript to renderer with typing effect
-      const transcript = response.data.text.trim();
-      event.sender.send("whisper-transcript", {
-        transcript: transcript,
-        is_final: true,
-        model: "whisper-1",
-        language: config.primaryLanguage,
-      });
-    }
-  } catch (error) {
-    console.error("Error processing audio chunks:", error);
+ipcMain.handle("stop-deepgram-stt", () => {
+  if (deepgramConnection) {
+    console.log("Stopping Deepgram STT");
+    deepgramConnection.finish();
+    deepgramConnection = null;
   }
-}
-
-function getConfig() {
-  return {
-    openai_key: process.env.OPENAI_API_KEY,
-    api_base: process.env.OPENAI_API_BASE || "https://api.openai.com/v1",
-    gpt_model: process.env.OPENAI_MODEL || "gpt-4o",
-    assistant_id: process.env.ASSISTANT_ID || "asst_ZyT7rWrTyqNq5l74PdATurJ5",
-    primaryLanguage: process.env.PRIMARY_LANGUAGE || "ru",
-    secondaryLanguage: process.env.SECONDARY_LANGUAGE || "en",
-  };
-}
-
-ipcMain.handle("stop-whisper-stt", () => {
-  isRecording = false;
-  audioChunks = [];
-
-  if (recordingTimer) {
-    clearTimeout(recordingTimer);
-    recordingTimer = null;
-  }
-
-  if (processAudioTimer) {
-    clearTimeout(processAudioTimer);
-    processAudioTimer = null;
-  }
-
-  console.log("OpenAI Whisper STT stopped");
 });
 
-// Desktop capture
 ipcMain.handle("get-desktop-sources", async () => {
   try {
     const sources = await desktopCapturer.getSources({
@@ -249,7 +227,6 @@ ipcMain.handle("get-desktop-sources", async () => {
   }
 });
 
-// Call Assistant function
 ipcMain.handle(
   "callAssistant",
   async (event, { config, assistantId, threadId, message }) => {
@@ -333,7 +310,6 @@ ipcMain.handle(
   }
 );
 
-// Utility function to normalize API base URL
 function normalizeApiBaseUrl(url) {
   if (!url) return "https://api.openai.com/v1";
   url = url.trim();

@@ -2,7 +2,7 @@
   "name": "interview-assistant",
   "productName": "Interview-Assistant",
   "version": "1.0.0",
-  "description": "Interview Assistant Application",
+  "description": "Interview Assistant Application with Deepgram STT",
   "main": ".webpack/main",
   "scripts": {
     "start": "electron-forge start",

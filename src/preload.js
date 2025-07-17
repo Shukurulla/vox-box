@@ -17,8 +17,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   callAssistant: (params) => ipcRenderer.invoke("callAssistant", params),
   getDesktopSources: () => ipcRenderer.invoke("get-desktop-sources"),
-  startWhisperSTT: (config) => ipcRenderer.invoke("start-whisper-stt", config),
-  sendAudioToWhisper: (audioData) =>
-    ipcRenderer.invoke("send-audio-to-whisper", audioData),
-  stopWhisperSTT: () => ipcRenderer.invoke("stop-whisper-stt"),
+  startDeepgramSTT: (config) =>
+    ipcRenderer.invoke("start-deepgram-stt", config),
+  sendAudioToDeepgram: (audioData) =>
+    ipcRenderer.invoke("send-audio-to-deepgram", audioData),
+  stopDeepgramSTT: () => ipcRenderer.invoke("stop-deepgram-stt"),
 });
