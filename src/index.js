@@ -107,14 +107,14 @@ ipcMain.handle("start-deepgram-stt", async (event, config) => {
 
     const deepgram = createClient(config.deepgram_api_key);
     deepgramConnection = deepgram.listen.live({
-      punctuate: true,
-      interim_results: false,
-      model: "general",
+      model: "nova-2",
       language: config.primaryLanguage || "ru",
+      smart_format: true,
+      interim_results: true,
+      endpointing: 300,
       encoding: "linear16",
       sample_rate: 16000,
-      endpointing: 500, // 0.5 seconds
-      smart_format: true,
+      channels: 1,
     });
 
     deepgramConnection.addListener(LiveTranscriptionEvents.Open, () => {
@@ -122,7 +122,7 @@ ipcMain.handle("start-deepgram-stt", async (event, config) => {
       event.sender.send("deepgram-status", {
         status: "open",
         language: config.primaryLanguage,
-        model: "deepgram-general",
+        model: "nova-2",
       });
     });
 
@@ -135,21 +135,15 @@ ipcMain.handle("start-deepgram-stt", async (event, config) => {
       LiveTranscriptionEvents.Transcript,
       (data) => {
         console.log("Deepgram transcript received:", data);
-        if (
-          data &&
-          data.is_final &&
-          data.channel?.alternatives?.[0]?.transcript &&
-          data.speech_final
-        ) {
+        if (data && data.channel?.alternatives?.[0]?.transcript) {
           const transcript = data.channel.alternatives[0].transcript.trim();
           if (transcript) {
             console.log("Sending transcript to renderer:", transcript);
             event.sender.send("deepgram-transcript", {
               transcript: transcript,
-              is_final: true,
+              is_final: data.is_final,
               speech_final: data.speech_final,
-              language: config.primaryLanguage,
-              model: "deepgram-general",
+              channel: data.channel,
               metadata: data.metadata,
             });
           }
@@ -181,7 +175,7 @@ ipcMain.handle("start-deepgram-stt", async (event, config) => {
     return {
       success: true,
       message: "Deepgram STT started successfully",
-      model: "deepgram-general",
+      model: "nova-2",
       language: config.primaryLanguage,
     };
   } catch (error) {

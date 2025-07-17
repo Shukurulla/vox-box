@@ -120,45 +120,62 @@ const InterviewPage = () => {
     [handleAskGPT]
   );
 
+  const [processedTranscripts, setProcessedTranscripts] = useState(new Set());
+
   useEffect(() => {
     const handleDeepgramTranscript = (event, data) => {
-      console.log("Raw Deepgram data:", JSON.stringify(data, null, 2));
-      if (data.is_final && data.channel?.alternatives?.[0]?.transcript) {
-        const transcript = data.channel.alternatives[0].transcript.trim();
-        console.log("Processed transcript:", transcript);
+      console.log("Deepgram transcript received:", data);
 
-        if (transcript) {
-          setSttStatus({
-            model: data.metadata?.model_info?.name || "general",
-            language: data.metadata?.model_info?.language || "ru",
-          });
+      // Faqat is_final=true va yangi transcript larni qabul qilish
+      if (data.is_final && data.transcript && data.transcript.trim()) {
+        const transcript = data.transcript.trim();
 
-          setCurrentText((prev) => {
-            const updatedText = prev + (prev ? " " : "") + transcript;
-            console.log("Updated currentText:", updatedText);
+        // Transcript ID yaratish (start time + transcript)
+        const transcriptId = `${data.start || Date.now()}-${transcript}`;
 
-            if (isAutoGPTEnabled) {
-              if (autoSubmitTimer) {
-                clearTimeout(autoSubmitTimer);
-              }
+        // Agar bu transcript allaqachon qayta ishlangan bo'lsa, ignore qilish
+        if (processedTranscripts.has(transcriptId)) {
+          console.log("Duplicate transcript ignored:", transcript);
+          return;
+        }
 
-              const newTimer = setTimeout(() => {
-                const newContent = updatedText.slice(lastProcessedIndex);
-                if (newContent.trim()) {
-                  console.log("Sending to GPT:", newContent);
-                  handleAskGPTStable(newContent);
-                }
-              }, 500);
-              setAutoSubmitTimer(newTimer);
+        // Yangi transcript ni processed listiga qo'shish
+        setProcessedTranscripts((prev) => new Set([...prev, transcriptId]));
+
+        console.log("Processing new transcript:", transcript);
+
+        setSttStatus({
+          model: data.metadata?.model_info?.name || "nova-2",
+          language: data.metadata?.model_info?.language || "ru",
+        });
+
+        setCurrentText((prev) => {
+          // Agar oldingi text oxirida bu transcript allaqachon bo'lsa, qo'shmaslik
+          if (prev.endsWith(transcript)) {
+            console.log("Transcript already exists at end, skipping");
+            return prev;
+          }
+
+          const updatedText = prev + (prev ? " " : "") + transcript;
+          console.log("Updated currentText:", updatedText);
+
+          if (isAutoGPTEnabled) {
+            if (autoSubmitTimer) {
+              clearTimeout(autoSubmitTimer);
             }
 
-            return updatedText;
-          });
-        } else {
-          console.log("Transcript is empty");
-        }
-      } else {
-        console.log("No valid transcript found in data");
+            const newTimer = setTimeout(() => {
+              const newContent = updatedText.slice(lastProcessedIndex);
+              if (newContent.trim()) {
+                console.log("Sending to GPT:", newContent);
+                handleAskGPTStable(newContent);
+              }
+            }, 1000);
+            setAutoSubmitTimer(newTimer);
+          }
+
+          return updatedText;
+        });
       }
     };
 
@@ -212,6 +229,12 @@ const InterviewPage = () => {
   const loadConfig = async () => {
     try {
       const config = await window.electronAPI.getConfig();
+      console.log("Loaded config:", {
+        hasOpenAIKey: !!config.openai_key,
+        hasDeepgramKey: !!config.deepgram_api_key,
+        language: config.primaryLanguage,
+      });
+
       if (config && config.openai_key && config.deepgram_api_key) {
         setIsConfigured(true);
         setAssistantId(config.assistant_id || "asst_ZyT7rWrTyqNq5l74PdATurJ5");
@@ -227,6 +250,8 @@ const InterviewPage = () => {
 
   const startRecording = async () => {
     try {
+      console.log("Starting recording...");
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -235,11 +260,12 @@ const InterviewPage = () => {
         },
         video: false,
       });
+
+      console.log("Got media stream");
       setUserMedia(stream);
 
       const config = await window.electronAPI.getConfig();
-
-      console.log("🎙️ Запуск Deepgram STT");
+      console.log("Starting Deepgram with config...");
 
       const result = await window.electronAPI.startDeepgramSTT({
         deepgram_api_key: config.deepgram_api_key,
@@ -250,7 +276,7 @@ const InterviewPage = () => {
         throw new Error(result.error);
       }
 
-      console.log("✅ Deepgram STT запущен:", result.message);
+      console.log("Deepgram STT started:", result.message);
 
       if (result.language || result.model) {
         setSttStatus({
@@ -280,17 +306,16 @@ const InterviewPage = () => {
       };
 
       setIsRecording(true);
+      console.log("Recording started successfully");
     } catch (err) {
-      console.error("Ошибка записи:", err);
-      setError(
-        "Не удалось начать запись: " +
-          (err.message ||
-            "Проверьте разрешения микрофона или попробуйте снова.")
-      );
+      console.error("Recording error:", err);
+      setError("Не удалось начать запись: " + err.message);
     }
   };
 
   const stopRecording = () => {
+    console.log("Stopping recording...");
+
     if (userMedia) {
       userMedia.getTracks().forEach((track) => track.stop());
     }
@@ -300,12 +325,15 @@ const InterviewPage = () => {
     if (processor) {
       processor.disconnect();
     }
+
     window.electronAPI.stopDeepgramSTT();
     setIsRecording(false);
     setUserMedia(null);
     setAudioContext(null);
     setProcessor(null);
     setSttStatus({});
+
+    console.log("Recording stopped");
   };
 
   useEffect(() => {
@@ -332,7 +360,36 @@ const InterviewPage = () => {
   };
 
   const handleTextareaChange = (e) => {
-    setCurrentText(e.target.value);
+    const newValue = e.target.value;
+    setCurrentText(newValue);
+
+    if (isAutoGPTEnabled) {
+      if (autoSubmitTimer) {
+        clearTimeout(autoSubmitTimer);
+      }
+
+      const newTimer = setTimeout(() => {
+        const newContent = newValue.slice(lastProcessedIndex);
+        if (newContent.trim()) {
+          handleAskGPTStable(newContent);
+        }
+      }, 2000);
+      setAutoSubmitTimer(newTimer);
+    }
+  };
+
+  const resetText = () => {
+    setCurrentText("");
+    setLastProcessedIndex(0);
+    setProcessedTranscripts(new Set()); // Processed transcripts ham tozalash
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  };
+
+  const clearAiResult = () => {
+    setDisplayedAiResult("");
+    setAiResult("");
   };
 
   return (
@@ -432,9 +489,7 @@ const InterviewPage = () => {
             <div className="flex items-center px-3 py-1.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300">
               <FileAudio size={14} className="mr-1" />
               <span className="text-xs font-medium">
-                {sttStatus.model.includes("deepgram")
-                  ? "Deepgram"
-                  : sttStatus.model}
+                {sttStatus.model.includes("nova") ? "Nova-2" : sttStatus.model}
               </span>
             </div>
           )}
@@ -454,7 +509,7 @@ const InterviewPage = () => {
               Транскрибированный текст
             </h2>
             <button
-              onClick={() => setCurrentText("")}
+              onClick={resetText}
               className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
               title="Очистить текст"
             >
@@ -467,11 +522,10 @@ const InterviewPage = () => {
             value={currentText}
             onChange={handleTextareaChange}
             className="flex-grow p-3 bg-white/50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none transition-all"
-            placeholder={
-              isRecording
-                ? "Идет запись... Речь появится здесь"
-                : "Транскрибированный текст появится здесь..."
-            }
+            placeholder="Транскрибированный текст появится здесь... (Siz ham yoza olasiz)"
+            style={{
+              minHeight: "200px",
+            }}
           />
 
           {isRecording && (
@@ -498,7 +552,7 @@ const InterviewPage = () => {
               Ответ ассистента
             </h2>
             <button
-              onClick={() => setDisplayedAiResult("")}
+              onClick={clearAiResult}
               className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
               title="Очистить ответ ИИ"
             >
